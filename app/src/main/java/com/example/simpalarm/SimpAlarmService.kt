@@ -10,7 +10,6 @@ import android.content.ActivityNotFoundException
 import android.content.Context
 import android.content.Intent
 import android.media.AudioAttributes
-import android.media.AudioManager
 import android.media.MediaPlayer
 import android.os.Build
 import android.os.IBinder
@@ -21,12 +20,10 @@ import android.os.VibratorManager
 import android.provider.Settings
 import androidx.core.app.NotificationCompat
 import androidx.core.app.NotificationManagerCompat
-import kotlin.math.max
 
 class SimpAlarmService : Service() {
     private var mediaPlayer: MediaPlayer? = null
     private var vibrator: Vibrator? = null
-    private var previousMusicVolume: Int? = null
 
     override fun onBind(intent: Intent?): IBinder? = null
 
@@ -87,7 +84,6 @@ class SimpAlarmService : Service() {
                 return START_NOT_STICKY
             }
             SimpAlarmFallbackNotifier.cancel(this)
-            runCatching { maximizeMusicVolume() }
             runCatching { startSound() }
                 .onFailure { SimpEventLog.record(this, "鬧鐘音效啟動失敗：${it.javaClass.simpleName}") }
             runCatching { startVibration() }
@@ -125,7 +121,6 @@ class SimpAlarmService : Service() {
             runCatching { mediaPlayer?.release() }
             mediaPlayer = null
             runCatching { vibrator?.cancel() }
-            runCatching { restoreMusicVolume() }
         } finally {
             isAlarmPlaying = false
             notifyAlarmDismissed()
@@ -223,20 +218,6 @@ class SimpAlarmService : Service() {
             "SimpAlarm:WakeScreen"
         )
         wakeLock.acquire(10_000L)
-    }
-
-    private fun maximizeMusicVolume() {
-        val audioManager = getSystemService(AudioManager::class.java)
-        previousMusicVolume = audioManager.getStreamVolume(AudioManager.STREAM_MUSIC)
-        val maxVolume = audioManager.getStreamMaxVolume(AudioManager.STREAM_MUSIC)
-        audioManager.setStreamVolume(AudioManager.STREAM_MUSIC, maxVolume, 0)
-    }
-
-    private fun restoreMusicVolume() {
-        val volume = previousMusicVolume ?: return
-        getSystemService(AudioManager::class.java)
-            .setStreamVolume(AudioManager.STREAM_MUSIC, max(0, volume), 0)
-        previousMusicVolume = null
     }
 
     private fun startSound() {
