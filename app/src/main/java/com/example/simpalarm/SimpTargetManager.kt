@@ -18,17 +18,24 @@ data class SimpTarget(
     val name: String get() = displayName
 
     fun matchesSender(sender: String): Boolean {
+        return matchesAnySender(listOf(sender))
+    }
+
+    fun matchesAnySender(senders: List<String>): Boolean {
+        val cleanedSenders = senders.map { it.trim() }.filter { it.isNotEmpty() }
         return senderAliases().any { alias ->
-            sender.equals(alias, ignoreCase = true) ||
-                sender.contains(alias, ignoreCase = true)
+            cleanedSenders.any { sender ->
+                sender.equals(alias, ignoreCase = true) ||
+                    sender.contains(alias, ignoreCase = true)
+            }
         }
     }
 
     fun senderAliases(): List<String> {
-        return notificationNames.split(',', '，', '、', '/', '|', '\n', '\t')
+        return (listOf(displayName) + notificationNames.split(',', '，', '、', '/', '|', '\n', '\t'))
             .map { it.trim() }
             .filter { it.isNotEmpty() }
-            .ifEmpty { listOf(displayName) }
+            .distinctBy { it.lowercase() }
     }
 }
 
@@ -202,7 +209,16 @@ object SimpTargetManager {
     }
 
     fun markTriggered(context: Context, targetIdOrName: String) {
-        setTargetEnabled(context, targetIdOrName, enabled = false)
+        saveTargetItemsNow(
+            context,
+            getTargetItems(context).map { target ->
+                if (target.id == targetIdOrName || target.displayName == targetIdOrName) {
+                    target.copy(enabled = false, continuousOverride = false)
+                } else {
+                    target
+                }
+            }
+        )
     }
 
     fun getTriggerMode(context: Context): TriggerMode {
@@ -305,6 +321,12 @@ object SimpTargetManager {
         prefs(context).edit()
             .putString(TARGET_ITEMS_KEY, encodeTargets(targets))
             .apply()
+    }
+
+    private fun saveTargetItemsNow(context: Context, targets: List<SimpTarget>) {
+        prefs(context).edit()
+            .putString(TARGET_ITEMS_KEY, encodeTargets(targets))
+            .commit()
     }
 
     private fun encodeTargets(targets: List<SimpTarget>): String {

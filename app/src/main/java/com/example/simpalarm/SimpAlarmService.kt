@@ -33,6 +33,10 @@ class SimpAlarmService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_DISMISS_ALARM) {
             SimpEventLog.record(this, "已從通知欄關閉鬧鐘。")
+            if (intent.getBooleanExtra(EXTRA_RETURN_TO_APP_ON_DISMISS, false)) {
+                openMainActivity()
+            }
+            notifyAlarmDismissed()
             stopSelf()
             return START_NOT_STICKY
         }
@@ -47,26 +51,38 @@ class SimpAlarmService : Service() {
         val alarmPresentationMode = SimpTargetManager.getAlarmPresentationMode(this)
         SimpEventLog.record(this, "鬧鐘服務已啟動：${sender.ifBlank { "未知通知" }}")
 
-        if (!isAlarmPlaying) {
+        if (!isAlarmPlaying || !isSoundPlaying()) {
             isAlarmPlaying = true
-            startForeground(
-                NOTIFICATION_ID,
-                buildNotification(
-                    sender,
-                    message,
-                    sourcePackage,
-                    sourceAppLabel,
-                    alarmPresentationMode,
-                    returnToAppOnDismiss
-                )
+            val notification = buildNotification(
+                sender,
+                message,
+                sourcePackage,
+                sourceAppLabel,
+                alarmPresentationMode,
+                returnToAppOnDismiss
             )
+            try {
+                startForeground(
+                    NOTIFICATION_ID,
+                    notification
+                )
+            } catch (error: RuntimeException) {
+                isAlarmPlaying = false
+                SimpEventLog.record(this, "前景鬧鐘服務啟動失敗：${error.javaClass.simpleName}")
+                stopSelf()
+                return START_NOT_STICKY
+            }
             runCatching { maximizeMusicVolume() }
             runCatching { startSound() }
+                .onFailure { SimpEventLog.record(this, "鬧鐘音效啟動失敗：${it.javaClass.simpleName}") }
             runCatching { startVibration() }
+                .onFailure { SimpEventLog.record(this, "鬧鐘震動啟動失敗：${it.javaClass.simpleName}") }
             if (shouldDisableTarget && matchedTarget.isNotBlank()) {
                 SimpTargetManager.markTriggered(this, matchedTarget)
+                SimpEventLog.record(this, "單次模式已自動關閉此對象：${sender.ifBlank { "未知通知" }}")
             }
         } else {
+            SimpEventLog.record(this, "鬧鐘已在播放，已更新通知：${sender.ifBlank { "未知通知" }}")
             NotificationManagerCompat.from(this).notify(
                 NOTIFICATION_ID,
                 buildNotification(
@@ -84,17 +100,25 @@ class SimpAlarmService : Service() {
             wakeScreenBriefly()
             openDismissActivity(intent, sender, message)
         }
-        return START_STICKY
+        return START_NOT_STICKY
     }
 
     override fun onDestroy() {
-        mediaPlayer?.stop()
-        mediaPlayer?.release()
-        mediaPlayer = null
-        vibrator?.cancel()
-        restoreMusicVolume()
-        isAlarmPlaying = false
+        try {
+            runCatching { mediaPlayer?.stop() }
+            runCatching { mediaPlayer?.release() }
+            mediaPlayer = null
+            runCatching { vibrator?.cancel() }
+            runCatching { restoreMusicVolume() }
+        } finally {
+            isAlarmPlaying = false
+            notifyAlarmDismissed()
+        }
         super.onDestroy()
+    }
+
+    private fun isSoundPlaying(): Boolean {
+        return runCatching { mediaPlayer?.isPlaying == true }.getOrDefault(false)
     }
 
     private fun buildNotification(
@@ -122,6 +146,7 @@ class SimpAlarmService : Service() {
         )
         val stopIntent = Intent(this, SimpAlarmService::class.java).apply {
             action = ACTION_DISMISS_ALARM
+            putExtra(EXTRA_RETURN_TO_APP_ON_DISMISS, returnToAppOnDismiss)
         }
         val stopPendingIntent = PendingIntent.getService(
             this,
@@ -198,6 +223,9 @@ class SimpAlarmService : Service() {
     }
 
     private fun startSound() {
+        runCatching { mediaPlayer?.stop() }
+        runCatching { mediaPlayer?.release() }
+        mediaPlayer = null
         val alarmUri = Settings.System.DEFAULT_ALARM_ALERT_URI
             ?: Settings.System.DEFAULT_NOTIFICATION_URI
         mediaPlayer = MediaPlayer().apply {
@@ -281,6 +309,19 @@ class SimpAlarmService : Service() {
         }
     }
 
+    private fun openMainActivity() {
+        val activityIntent = Intent(this, MainActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or
+                Intent.FLAG_ACTIVITY_CLEAR_TOP or
+                Intent.FLAG_ACTIVITY_SINGLE_TOP
+        }
+        fallbackStartActivity(activityIntent)
+    }
+
+    private fun notifyAlarmDismissed() {
+        sendBroadcast(Intent(ACTION_ALARM_DISMISSED).setPackage(packageName))
+    }
+
     companion object {
         const val EXTRA_SENDER_NAME = "SENDER_NAME"
         const val EXTRA_MATCHED_TARGET = "MATCHED_TARGET"
@@ -290,7 +331,8 @@ class SimpAlarmService : Service() {
         const val EXTRA_SHOULD_DISABLE_TARGET = "SHOULD_DISABLE_TARGET"
         const val EXTRA_RETURN_TO_APP_ON_DISMISS = "RETURN_TO_APP_ON_DISMISS"
 
-        private const val ACTION_DISMISS_ALARM = "com.example.simpalarm.action.DISMISS_ALARM"
+        const val ACTION_DISMISS_ALARM = "com.example.simpalarm.action.DISMISS_ALARM"
+        const val ACTION_ALARM_DISMISSED = "com.example.simpalarm.action.ALARM_DISMISSED"
         private const val CHANNEL_ID = "simp_alarm_channel_v2"
         private const val NOTIFICATION_ID = 1001
         private const val DISMISS_ACTIVITY_REQUEST_CODE = 2001

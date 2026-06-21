@@ -17,10 +17,19 @@ import android.service.notification.NotificationListenerService
 import android.util.Log
 import android.widget.Toast
 import androidx.activity.ComponentActivity
+import androidx.activity.compose.BackHandler
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.compose.setContent
 import androidx.activity.enableEdgeToEdge
 import androidx.activity.result.contract.ActivityResultContracts
+import androidx.compose.animation.AnimatedContent
+import androidx.compose.animation.SizeTransform
+import androidx.compose.animation.core.tween
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
+import androidx.compose.animation.slideInHorizontally
+import androidx.compose.animation.slideOutHorizontally
+import androidx.compose.animation.togetherWith
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.spring
 import androidx.compose.foundation.BorderStroke
@@ -149,6 +158,17 @@ private enum class AppScreen {
     TargetDetail
 }
 
+private fun AppScreen.animationIndex(): Int {
+    return when (this) {
+        AppScreen.Home -> 0
+        AppScreen.Targets -> 1
+        AppScreen.TargetDetail -> 2
+        AppScreen.Apps -> 3
+        AppScreen.History -> 4
+        AppScreen.Settings -> 5
+    }
+}
+
 private enum class TargetFilter {
     All,
     Enabled,
@@ -206,6 +226,7 @@ private fun MainScreen() {
     var skippedListenerPrompt by remember { mutableStateOf(false) }
     var skippedFullScreenPrompt by remember { mutableStateOf(false) }
     var skippedBatteryPrompt by remember { mutableStateOf(false) }
+    var lastBackPressedAt by remember { mutableStateOf(0L) }
 
     val colors = UiColors(darkMode)
     val scrollState = rememberScrollState()
@@ -255,6 +276,30 @@ private fun MainScreen() {
         contract = ActivityResultContracts.RequestPermission()
     ) { granted ->
         alarmNotificationAllowed = granted || isAlarmNotificationAllowed(context)
+    }
+
+    BackHandler {
+        when {
+            showTargetDialog -> showTargetDialog = false
+            deletingTarget != null -> deletingTarget = null
+            showClearHistoryDialog -> showClearHistoryDialog = false
+            showOnboarding -> showOnboarding = false
+            pendingPrompt != null -> pendingPrompt = null
+            screen == AppScreen.TargetDetail -> screen = AppScreen.Targets
+            screen != AppScreen.Home -> {
+                screen = AppScreen.Home
+                lastBackPressedAt = 0L
+            }
+            else -> {
+                val now = System.currentTimeMillis()
+                if (now - lastBackPressedAt <= 2_000L) {
+                    activity?.finish()
+                } else {
+                    lastBackPressedAt = now
+                    Toast.makeText(context, "再按一次返回即可退出應用。", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
     }
 
     LaunchedEffect(Unit) {
@@ -338,14 +383,31 @@ private fun MainScreen() {
                         scrollViewportBottom.floatValue = pos.y + coords.size.height
                     }
             ) {
-                Column(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .verticalScroll(scrollState)
-                        .padding(start = 20.dp, end = 20.dp, top = 10.dp, bottom = 20.dp),
-                    verticalArrangement = Arrangement.spacedBy(16.dp)
-                ) {
-                    when (screen) {
+                AnimatedContent(
+                    targetState = screen,
+                    transitionSpec = {
+                        val forward = targetState.animationIndex() >= initialState.animationIndex()
+                        val slideDistance = 52
+                        val enterOffset = if (forward) slideDistance else -slideDistance
+                        val exitOffset = if (forward) -slideDistance else slideDistance
+                        (fadeIn(animationSpec = tween(160)) +
+                            slideInHorizontally(animationSpec = tween(220)) { enterOffset })
+                            .togetherWith(
+                                fadeOut(animationSpec = tween(120)) +
+                                    slideOutHorizontally(animationSpec = tween(180)) { exitOffset }
+                            )
+                            .using(SizeTransform(clip = false))
+                    },
+                    label = "screen_transition"
+                ) { targetScreen ->
+                    Column(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .verticalScroll(scrollState)
+                            .padding(start = 20.dp, end = 20.dp, top = 10.dp, bottom = 20.dp),
+                        verticalArrangement = Arrangement.spacedBy(16.dp)
+                    ) {
+                    when (targetScreen) {
                         AppScreen.Home -> HomeScreen(
                         colors = colors,
                         targets = targets,
@@ -508,6 +570,7 @@ private fun MainScreen() {
                         }
                     )
                 }
+            }
             }
             }
             BottomNav(colors = colors, screen = screen) { screen = it }

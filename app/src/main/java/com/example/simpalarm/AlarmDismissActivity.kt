@@ -1,6 +1,9 @@
 package com.example.simpalarm
 
+import android.content.BroadcastReceiver
+import android.content.Context
 import android.content.Intent
+import android.content.IntentFilter
 import android.os.Build
 import android.os.Bundle
 import android.view.WindowManager
@@ -44,9 +47,18 @@ private val AlarmSubText = Color(0xFF7B5151)
 private val AlarmPrimary = Color(0xFF55689E)
 
 class AlarmDismissActivity : ComponentActivity() {
+    private val alarmDismissedReceiver = object : BroadcastReceiver() {
+        override fun onReceive(context: Context?, intent: Intent?) {
+            if (intent?.action == SimpAlarmService.ACTION_ALARM_DISMISSED) {
+                finish()
+            }
+        }
+    }
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         showOverLockScreen()
+        registerAlarmDismissedReceiver()
         val returnToAppOnDismiss =
             intent.getBooleanExtra(SimpAlarmService.EXTRA_RETURN_TO_APP_ON_DISMISS, false)
         setContent {
@@ -56,17 +68,22 @@ class AlarmDismissActivity : ComponentActivity() {
                     message = intent.getStringExtra(SimpAlarmService.EXTRA_MESSAGE_TEXT).orEmpty(),
                     sourceAppLabel = intent.getStringExtra(SimpAlarmService.EXTRA_SOURCE_APP_LABEL).orEmpty(),
                     onDismiss = {
-                        stopService(Intent(this, SimpAlarmService::class.java))
+                        dismissAlarm()
                         returnToAppOrFinish(returnToAppOnDismiss)
                     },
                     onOpenInstagram = {
-                        stopService(Intent(this, SimpAlarmService::class.java))
+                        dismissAlarm()
                         openSourceApp(intent.getStringExtra(SimpAlarmService.EXTRA_SOURCE_PACKAGE).orEmpty())
                         finish()
                     }
                 )
             }
         }
+    }
+
+    override fun onDestroy() {
+        runCatching { unregisterReceiver(alarmDismissedReceiver) }
+        super.onDestroy()
     }
 
     private fun showOverLockScreen() {
@@ -87,6 +104,24 @@ class AlarmDismissActivity : ComponentActivity() {
             .getLaunchIntentForPackage(packageName.ifBlank { SimpNotificationListener.INSTAGRAM_PACKAGE })
             ?: return
         startActivity(launchIntent)
+    }
+
+    private fun dismissAlarm() {
+        val dismissIntent = Intent(this, SimpAlarmService::class.java).apply {
+            action = SimpAlarmService.ACTION_DISMISS_ALARM
+        }
+        runCatching { startService(dismissIntent) }
+            .onFailure { stopService(Intent(this, SimpAlarmService::class.java)) }
+    }
+
+    private fun registerAlarmDismissedReceiver() {
+        val filter = IntentFilter(SimpAlarmService.ACTION_ALARM_DISMISSED)
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+            registerReceiver(alarmDismissedReceiver, filter, RECEIVER_NOT_EXPORTED)
+        } else {
+            @Suppress("DEPRECATION")
+            registerReceiver(alarmDismissedReceiver, filter)
+        }
     }
 
     private fun returnToAppOrFinish(returnToApp: Boolean) {
