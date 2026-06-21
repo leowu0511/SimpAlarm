@@ -175,6 +175,8 @@ private enum class TargetFilter {
     Starred
 }
 
+private const val AUTO_RECONNECT_INTERVAL_MS = 30_000L
+
 class MainActivity : ComponentActivity() {
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -234,17 +236,19 @@ private fun MainScreen() {
     val scrollViewportBottom = remember { mutableFloatStateOf(0f) }
 
     fun refreshAppState() {
+        val currentListenerEnabled = isNotificationListenerEnabled(context)
         targets = SimpTargetManager.getTargetItems(context)
         triggerMode = SimpTargetManager.getTriggerMode(context)
         alarmPresentationMode = SimpTargetManager.getAlarmPresentationMode(context)
         monitoredApps = SimpTargetManager.getMonitoredApps(context)
         history = SimpEventLog.triggerHistory(context)
-        listenerEnabled = isNotificationListenerEnabled(context)
+        listenerEnabled = currentListenerEnabled
         alarmNotificationAllowed = isAlarmNotificationAllowed(context)
         fullScreenIntentAllowed = isFullScreenIntentAllowed(context)
         batteryOptimized = isBatteryOptimizationActive(context)
         powerSaveMode = isPowerSaveModeActive(context)
         lastEvent = SimpEventLog.lastEvent(context)
+        syncListenerHeartbeat(context, currentListenerEnabled)
     }
 
     fun currentOnboardingStep(): OnboardingStep {
@@ -303,7 +307,17 @@ private fun MainScreen() {
     }
 
     LaunchedEffect(Unit) {
+        requestNotificationListenerReconnectSilently(context)
         refreshAppState()
+    }
+
+    LaunchedEffect(listenerEnabled) {
+        if (listenerEnabled) {
+            while (true) {
+                requestNotificationListenerReconnectSilently(context)
+                delay(60_000L)
+            }
+        }
     }
 
     LaunchedEffect(
@@ -327,6 +341,7 @@ private fun MainScreen() {
         val lifecycle = activity?.lifecycle ?: return@DisposableEffect onDispose {}
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
+                requestNotificationListenerReconnectSilently(context)
                 refreshAppState()
                 if (!onboardingDone && !showTargetDialog) {
                     showOnboarding = true
@@ -1182,18 +1197,18 @@ private fun TargetEditDialog(
                 OutlinedTextField(
                     value = displayName,
                     onValueChange = { displayName = it },
-                    label = { Text("顯示名稱") },
-                    placeholder = { Text("例如：小明") },
+                    label = { Text("列表顯示名稱") },
+                    placeholder = { Text("例如：我的重點對象") },
                     singleLine = true
                 )
                 OutlinedTextField(
                     value = notificationNames,
                     onValueChange = { notificationNames = it },
-                    label = { Text("通知 ID") },
-                    placeholder = { Text("例如：ming123, 小明本人") },
+                    label = { Text("通知比對名稱") },
+                    placeholder = { Text("例如：寶寶2號, 網戀被騙10元") },
                     singleLine = true
                 )
-                Text("請填通知上實際會出現的文字，可用逗號或頓號放多個名稱。", color = colors.muted, style = MaterialTheme.typography.bodySmall)
+                Text("請填通知上實際會出現的暱稱或用戶 ID。多個名稱請用逗號、頓號或斜線分隔。", color = colors.muted, style = MaterialTheme.typography.bodySmall)
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedButton(onClick = { launcher.launch(arrayOf("image/*")) }) { Text("選擇圖片") }
                     OutlinedButton(onClick = { photoUri = null }) { Text("使用幾何圖形") }
@@ -1418,6 +1433,41 @@ private fun requestNotificationListenerReconnect(context: Context) {
     } else {
         Toast.makeText(context, "請到通知監聽設定關閉後再重新開啟。", Toast.LENGTH_LONG).show()
         context.startActivity(Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS))
+    }
+}
+
+private fun requestNotificationListenerReconnectSilently(context: Context) {
+    if (!isNotificationListenerEnabled(context) || Build.VERSION.SDK_INT < Build.VERSION_CODES.N) {
+        return
+    }
+
+    val prefs = context.applicationContext.getSharedPreferences("simp_listener_reconnect", Context.MODE_PRIVATE)
+    val now = System.currentTimeMillis()
+    val lastRequest = prefs.getLong("last_request_at", 0L)
+    if (now - lastRequest < AUTO_RECONNECT_INTERVAL_MS) {
+        return
+    }
+
+    runCatching {
+        NotificationListenerService.requestRebind(
+            ComponentName(context, SimpNotificationListener::class.java)
+        )
+        prefs.edit().putLong("last_request_at", now).apply()
+        SimpEventLog.record(context, "已自動要求系統重新連線通知監聽。")
+    }.onFailure { error ->
+        SimpEventLog.record(context, "自動重新連線通知監聽失敗：${error.javaClass.simpleName}")
+    }
+}
+
+private fun syncListenerHeartbeat(context: Context, listenerEnabled: Boolean) {
+    if (listenerEnabled) {
+        runCatching { SimpListenerHeartbeatService.start(context) }
+            .onFailure { error ->
+                SimpEventLog.record(context, "通知監聽保活啟動失敗：${error.javaClass.simpleName}")
+            }
+    } else {
+        SimpEventLog.record(context, "通知監聽權限未啟用，保活服務保持停止。")
+        SimpListenerHeartbeatService.stop(context)
     }
 }
 

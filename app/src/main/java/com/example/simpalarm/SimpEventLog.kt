@@ -1,6 +1,7 @@
 package com.example.simpalarm
 
 import android.content.Context
+import android.util.Log
 import org.json.JSONArray
 import org.json.JSONObject
 import java.text.SimpleDateFormat
@@ -22,6 +23,7 @@ object SimpEventLog {
 
     fun record(context: Context, message: String) {
         val timestamp = SimpleDateFormat("HH:mm:ss", Locale.getDefault()).format(Date())
+        Log.d("SimpAlarmEvent", message)
         prefs(context).edit()
             .putString(LAST_EVENT_KEY, "$timestamp  $message")
             .apply()

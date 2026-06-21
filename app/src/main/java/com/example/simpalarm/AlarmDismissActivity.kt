@@ -38,6 +38,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.core.content.ContextCompat
 import kotlin.math.roundToInt
 import com.example.simpalarm.ui.theme.SimpAlarmTheme
 
@@ -59,6 +60,7 @@ class AlarmDismissActivity : ComponentActivity() {
         super.onCreate(savedInstanceState)
         showOverLockScreen()
         registerAlarmDismissedReceiver()
+        startAlarmFromActivityIfNeeded()
         val returnToAppOnDismiss =
             intent.getBooleanExtra(SimpAlarmService.EXTRA_RETURN_TO_APP_ON_DISMISS, false)
         setContent {
@@ -109,9 +111,43 @@ class AlarmDismissActivity : ComponentActivity() {
     private fun dismissAlarm() {
         val dismissIntent = Intent(this, SimpAlarmService::class.java).apply {
             action = SimpAlarmService.ACTION_DISMISS_ALARM
+            putExtra(
+                SimpAlarmService.EXTRA_RETURN_TO_APP_ON_DISMISS,
+                intent.getBooleanExtra(SimpAlarmService.EXTRA_RETURN_TO_APP_ON_DISMISS, false)
+            )
         }
         runCatching { startService(dismissIntent) }
             .onFailure { stopService(Intent(this, SimpAlarmService::class.java)) }
+    }
+
+    private fun startAlarmFromActivityIfNeeded() {
+        if (!intent.getBooleanExtra(SimpAlarmService.EXTRA_START_ALARM_FROM_ACTIVITY, false)) return
+
+        val alarmIntent = Intent(this, SimpAlarmService::class.java).apply {
+            putExtra(SimpAlarmService.EXTRA_SENDER_NAME, intent.getStringExtra(SimpAlarmService.EXTRA_SENDER_NAME).orEmpty())
+            putExtra(SimpAlarmService.EXTRA_MATCHED_TARGET, intent.getStringExtra(SimpAlarmService.EXTRA_MATCHED_TARGET).orEmpty())
+            putExtra(SimpAlarmService.EXTRA_MESSAGE_TEXT, intent.getStringExtra(SimpAlarmService.EXTRA_MESSAGE_TEXT).orEmpty())
+            putExtra(SimpAlarmService.EXTRA_SOURCE_PACKAGE, intent.getStringExtra(SimpAlarmService.EXTRA_SOURCE_PACKAGE).orEmpty())
+            putExtra(SimpAlarmService.EXTRA_SOURCE_APP_LABEL, intent.getStringExtra(SimpAlarmService.EXTRA_SOURCE_APP_LABEL).orEmpty())
+            putExtra(
+                SimpAlarmService.EXTRA_SHOULD_DISABLE_TARGET,
+                intent.getBooleanExtra(SimpAlarmService.EXTRA_SHOULD_DISABLE_TARGET, false)
+            )
+            putExtra(
+                SimpAlarmService.EXTRA_RETURN_TO_APP_ON_DISMISS,
+                intent.getBooleanExtra(SimpAlarmService.EXTRA_RETURN_TO_APP_ON_DISMISS, false)
+            )
+            putExtra(SimpAlarmService.EXTRA_START_ALARM_FROM_ACTIVITY, true)
+        }
+        runCatching {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+                ContextCompat.startForegroundService(this, alarmIntent)
+            } else {
+                startService(alarmIntent)
+            }
+        }.onFailure { error ->
+            SimpEventLog.record(this, "從解除畫面啟動鬧鐘失敗：${error.javaClass.simpleName}")
+        }
     }
 
     private fun registerAlarmDismissedReceiver() {

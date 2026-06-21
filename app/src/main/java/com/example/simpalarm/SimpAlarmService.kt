@@ -48,6 +48,8 @@ class SimpAlarmService : Service() {
         val sourceAppLabel = intent?.getStringExtra(EXTRA_SOURCE_APP_LABEL).orEmpty()
         val shouldDisableTarget = intent?.getBooleanExtra(EXTRA_SHOULD_DISABLE_TARGET, false) == true
         val returnToAppOnDismiss = intent?.getBooleanExtra(EXTRA_RETURN_TO_APP_ON_DISMISS, false) == true
+        val startedFromDismissActivity =
+            intent?.getBooleanExtra(EXTRA_START_ALARM_FROM_ACTIVITY, false) == true
         val alarmPresentationMode = SimpTargetManager.getAlarmPresentationMode(this)
         SimpEventLog.record(this, "鬧鐘服務已啟動：${sender.ifBlank { "未知通知" }}")
 
@@ -68,10 +70,22 @@ class SimpAlarmService : Service() {
                 )
             } catch (error: RuntimeException) {
                 isAlarmPlaying = false
-                SimpEventLog.record(this, "前景鬧鐘服務啟動失敗：${error.javaClass.simpleName}")
+                SimpEventLog.record(this, "前景鬧鐘服務啟動失敗：${error.javaClass.simpleName}，已改用備援通知。")
+                SimpAlarmFallbackNotifier.show(
+                    context = this,
+                    sender = sender,
+                    message = message,
+                    matchedTarget = matchedTarget,
+                    sourcePackage = sourcePackage,
+                    sourceAppLabel = sourceAppLabel,
+                    shouldDisableTarget = shouldDisableTarget,
+                    returnToAppOnDismiss = returnToAppOnDismiss,
+                    alarmPresentationMode = alarmPresentationMode
+                )
                 stopSelf()
                 return START_NOT_STICKY
             }
+            SimpAlarmFallbackNotifier.cancel(this)
             runCatching { maximizeMusicVolume() }
             runCatching { startSound() }
                 .onFailure { SimpEventLog.record(this, "鬧鐘音效啟動失敗：${it.javaClass.simpleName}") }
@@ -96,7 +110,7 @@ class SimpAlarmService : Service() {
             )
         }
 
-        if (alarmPresentationMode == AlarmPresentationMode.FullScreen) {
+        if (alarmPresentationMode == AlarmPresentationMode.FullScreen && !startedFromDismissActivity) {
             wakeScreenBriefly()
             openDismissActivity(intent, sender, message)
         }
@@ -330,9 +344,11 @@ class SimpAlarmService : Service() {
         const val EXTRA_SOURCE_APP_LABEL = "SOURCE_APP_LABEL"
         const val EXTRA_SHOULD_DISABLE_TARGET = "SHOULD_DISABLE_TARGET"
         const val EXTRA_RETURN_TO_APP_ON_DISMISS = "RETURN_TO_APP_ON_DISMISS"
+        const val EXTRA_START_ALARM_FROM_ACTIVITY = "START_ALARM_FROM_ACTIVITY"
 
         const val ACTION_DISMISS_ALARM = "com.example.simpalarm.action.DISMISS_ALARM"
         const val ACTION_ALARM_DISMISSED = "com.example.simpalarm.action.ALARM_DISMISSED"
+        const val FALLBACK_NOTIFICATION_ID = 1002
         private const val CHANNEL_ID = "simp_alarm_channel_v2"
         private const val NOTIFICATION_ID = 1001
         private const val DISMISS_ACTIVITY_REQUEST_CODE = 2001
