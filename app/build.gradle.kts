@@ -1,7 +1,27 @@
+import java.util.Properties
+
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.compose)
 }
+
+val signingProperties = Properties().apply {
+    val file = rootProject.file("signing.properties")
+    if (file.exists()) {
+        file.inputStream().use(::load)
+    }
+}
+
+val releaseStoreFile = signingProperties.getProperty("storeFile")
+val releaseStorePassword = signingProperties.getProperty("storePassword")
+val releaseKeyAlias = signingProperties.getProperty("keyAlias")
+val releaseKeyPassword = signingProperties.getProperty("keyPassword")
+val hasReleaseSigning = listOf(
+    releaseStoreFile,
+    releaseStorePassword,
+    releaseKeyAlias,
+    releaseKeyPassword
+).all { !it.isNullOrBlank() }
 
 android {
     namespace = "com.example.simpalarm"
@@ -21,8 +41,22 @@ android {
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 
+    signingConfigs {
+        if (hasReleaseSigning) {
+            create("release") {
+                storeFile = rootProject.file(releaseStoreFile!!)
+                storePassword = releaseStorePassword
+                keyAlias = releaseKeyAlias
+                keyPassword = releaseKeyPassword
+            }
+        }
+    }
+
     buildTypes {
         release {
+            if (hasReleaseSigning) {
+                signingConfig = signingConfigs.getByName("release")
+            }
             optimization {
                 enable = false
             }
