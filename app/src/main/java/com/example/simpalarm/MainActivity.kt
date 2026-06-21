@@ -238,10 +238,12 @@ private fun MainScreen() {
 
     fun refreshAppState() {
         val currentListenerEnabled = isNotificationListenerEnabled(context)
-        targets = SimpTargetManager.getTargetItems(context)
+        val currentTargets = SimpTargetManager.getTargetItems(context)
+        val currentMonitoredApps = SimpTargetManager.getMonitoredApps(context)
+        targets = currentTargets
         triggerMode = SimpTargetManager.getTriggerMode(context)
         alarmPresentationMode = SimpTargetManager.getAlarmPresentationMode(context)
-        monitoredApps = SimpTargetManager.getMonitoredApps(context)
+        monitoredApps = currentMonitoredApps
         history = SimpEventLog.triggerHistory(context)
         listenerEnabled = currentListenerEnabled
         alarmNotificationAllowed = isAlarmNotificationAllowed(context)

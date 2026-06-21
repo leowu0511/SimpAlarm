@@ -283,6 +283,18 @@ class SimpAlarmService : Service() {
         sourceAppLabel: String,
         sourcePackage: String
     ) {
+        if (SimpAlarmOverlay.canShow(this)) {
+            SimpAlarmOverlay.show(
+                context = this,
+                sender = sender,
+                message = message,
+                sourceAppLabel = sourceAppLabel,
+                sourcePackage = sourcePackage,
+                returnToAppOnDismiss = sourceIntent?.getBooleanExtra(EXTRA_RETURN_TO_APP_ON_DISMISS, false) == true
+            )
+            return
+        }
+
         val activityIntent = Intent(this, AlarmDismissActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
             putExtra(EXTRA_SENDER_NAME, sender)
@@ -301,20 +313,6 @@ class SimpAlarmService : Service() {
             activityIntent,
             PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
             backgroundActivityStartOptions()
-        )
-
-        if (fallbackStartActivity(activityIntent)) {
-            SimpEventLog.record(this, "已直接跳出鬧鐘解除畫面。")
-            return
-        }
-
-        SimpAlarmOverlay.show(
-            context = this,
-            sender = sender,
-            message = message,
-            sourceAppLabel = sourceAppLabel,
-            sourcePackage = sourcePackage,
-            returnToAppOnDismiss = sourceIntent?.getBooleanExtra(EXTRA_RETURN_TO_APP_ON_DISMISS, false) == true
         )
 
         try {

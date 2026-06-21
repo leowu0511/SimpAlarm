@@ -4,15 +4,18 @@ import android.content.Context
 import android.content.Intent
 import android.graphics.Color
 import android.graphics.PixelFormat
+import android.graphics.drawable.GradientDrawable
 import android.net.Uri
 import android.os.Build
 import android.os.Handler
 import android.os.Looper
 import android.provider.Settings
 import android.view.Gravity
+import android.view.MotionEvent
 import android.view.View
 import android.view.WindowManager
 import android.widget.Button
+import android.widget.FrameLayout
 import android.widget.LinearLayout
 import android.widget.TextView
 
@@ -139,23 +142,22 @@ object SimpAlarmOverlay {
         )
         addText(message.ifBlank { "你設定的對象剛剛傳來通知。" }, 18f, Color.rgb(123, 81, 81))
 
-        val dismissButton = Button(context).apply {
-            text = "我醒了，關閉鬧鐘"
-            setOnClickListener {
+        val dismissSlider = buildDismissSlider(context) {
+            runCatching {
                 context.startService(
                     Intent(context, SimpAlarmService::class.java).apply {
                         action = SimpAlarmService.ACTION_DISMISS_ALARM
                         putExtra(SimpAlarmService.EXTRA_RETURN_TO_APP_ON_DISMISS, returnToAppOnDismiss)
                     }
                 )
-                dismiss(context)
             }
+            dismiss(context)
         }
         container.addView(
-            dismissButton,
+            dismissSlider,
             LinearLayout.LayoutParams(
                 LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
+                dp(context, 58)
             ).apply { topMargin = 24 }
         )
 
@@ -183,5 +185,83 @@ object SimpAlarmOverlay {
         )
 
         return container
+    }
+
+    private fun buildDismissSlider(context: Context, onDismiss: () -> Unit): View {
+        val track = FrameLayout(context).apply {
+            background = rounded(Color.rgb(224, 211, 216), dp(context, 28).toFloat())
+        }
+        val label = TextView(context).apply {
+            text = "向右滑動關閉鬧鐘"
+            gravity = Gravity.CENTER
+            textSize = 16f
+            setTextColor(Color.rgb(74, 17, 17))
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+        }
+        track.addView(
+            label,
+            FrameLayout.LayoutParams(
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                FrameLayout.LayoutParams.MATCH_PARENT
+            )
+        )
+
+        val thumb = TextView(context).apply {
+            text = ">"
+            gravity = Gravity.CENTER
+            textSize = 22f
+            setTextColor(Color.WHITE)
+            typeface = android.graphics.Typeface.DEFAULT_BOLD
+            background = rounded(Color.rgb(85, 104, 158), dp(context, 28).toFloat())
+        }
+        val thumbWidth = dp(context, 82)
+        track.addView(
+            thumb,
+            FrameLayout.LayoutParams(
+                thumbWidth,
+                FrameLayout.LayoutParams.MATCH_PARENT,
+                Gravity.START
+            )
+        )
+
+        var downX = 0f
+        var startTranslation = 0f
+        thumb.setOnTouchListener { view, event ->
+            val maxOffset = (track.width - thumbWidth).coerceAtLeast(0).toFloat()
+            when (event.actionMasked) {
+                MotionEvent.ACTION_DOWN -> {
+                    downX = event.rawX
+                    startTranslation = view.translationX
+                    true
+                }
+                MotionEvent.ACTION_MOVE -> {
+                    val next = (startTranslation + event.rawX - downX).coerceIn(0f, maxOffset)
+                    view.translationX = next
+                    true
+                }
+                MotionEvent.ACTION_UP, MotionEvent.ACTION_CANCEL -> {
+                    if (view.translationX >= maxOffset * 0.82f) {
+                        onDismiss()
+                    } else {
+                        view.animate().translationX(0f).setDuration(160).start()
+                    }
+                    true
+                }
+                else -> false
+            }
+        }
+
+        return track
+    }
+
+    private fun rounded(color: Int, radius: Float): GradientDrawable {
+        return GradientDrawable().apply {
+            setColor(color)
+            cornerRadius = radius
+        }
+    }
+
+    private fun dp(context: Context, value: Int): Int {
+        return (value * context.resources.displayMetrics.density).toInt()
     }
 }
