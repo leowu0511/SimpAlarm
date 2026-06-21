@@ -31,6 +31,7 @@ class SimpAlarmService : Service() {
         if (intent?.action == ACTION_DISMISS_ALARM) {
             SimpEventLog.record(this, "已從通知欄關閉鬧鐘。")
             SimpAlarmOverlay.dismiss(this)
+            cancelSoundOnlyHeadsUp()
             if (intent.getBooleanExtra(EXTRA_RETURN_TO_APP_ON_DISMISS, false)) {
                 openMainActivity()
             }
@@ -88,6 +89,15 @@ class SimpAlarmService : Service() {
                 .onFailure { SimpEventLog.record(this, "鬧鐘音效啟動失敗：${it.javaClass.simpleName}") }
             runCatching { startVibration() }
                 .onFailure { SimpEventLog.record(this, "鬧鐘震動啟動失敗：${it.javaClass.simpleName}") }
+            if (alarmPresentationMode == AlarmPresentationMode.SoundOnly) {
+                showSoundOnlyHeadsUp(
+                    sender = sender,
+                    message = message,
+                    sourcePackage = sourcePackage,
+                    sourceAppLabel = sourceAppLabel,
+                    returnToAppOnDismiss = returnToAppOnDismiss
+                )
+            }
             if (shouldDisableTarget && matchedTarget.isNotBlank()) {
                 SimpTargetManager.markTriggered(this, matchedTarget)
                 SimpEventLog.record(this, "單次模式已自動關閉此對象：${sender.ifBlank { "未知通知" }}")
@@ -105,6 +115,15 @@ class SimpAlarmService : Service() {
                     returnToAppOnDismiss
                 )
             )
+            if (alarmPresentationMode == AlarmPresentationMode.SoundOnly) {
+                showSoundOnlyHeadsUp(
+                    sender = sender,
+                    message = message,
+                    sourcePackage = sourcePackage,
+                    sourceAppLabel = sourceAppLabel,
+                    returnToAppOnDismiss = returnToAppOnDismiss
+                )
+            }
         }
 
         if (alarmPresentationMode == AlarmPresentationMode.FullScreen && !startedFromDismissActivity) {
@@ -117,6 +136,7 @@ class SimpAlarmService : Service() {
     override fun onDestroy() {
         try {
             SimpAlarmOverlay.dismiss(this)
+            cancelSoundOnlyHeadsUp()
             runCatching { mediaPlayer?.stop() }
             runCatching { mediaPlayer?.release() }
             mediaPlayer = null
@@ -204,6 +224,82 @@ class SimpAlarmService : Service() {
         ).apply {
             description = "指定 Instagram 通知抵達時顯示的鬧鐘。"
             lockscreenVisibility = Notification.VISIBILITY_PUBLIC
+        }
+        getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
+    }
+
+    private fun showSoundOnlyHeadsUp(
+        sender: String,
+        message: String,
+        sourcePackage: String,
+        sourceAppLabel: String,
+        returnToAppOnDismiss: Boolean
+    ) {
+        ensureSoundOnlyHeadsUpChannel()
+        val appPrefix = sourceAppLabel.ifBlank { "監聽 App" }
+        val title = if (sender.isBlank()) "Simp Alarm" else "$sender 從 $appPrefix 傳訊息了"
+        val text = message.ifBlank { "鬧鐘正在播放，可直接關閉。" }
+
+        val openIntent = Intent(this, AlarmDismissActivity::class.java).apply {
+            flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
+            putExtra(EXTRA_SENDER_NAME, sender)
+            putExtra(EXTRA_MESSAGE_TEXT, message)
+            putExtra(EXTRA_SOURCE_PACKAGE, sourcePackage)
+            putExtra(EXTRA_SOURCE_APP_LABEL, sourceAppLabel)
+            putExtra(EXTRA_RETURN_TO_APP_ON_DISMISS, returnToAppOnDismiss)
+        }
+        val openPendingIntent = PendingIntent.getActivity(
+            this,
+            SOUND_ONLY_OPEN_REQUEST_CODE,
+            openIntent,
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+            backgroundActivityStartOptions()
+        )
+        val stopPendingIntent = PendingIntent.getService(
+            this,
+            SOUND_ONLY_DISMISS_REQUEST_CODE,
+            Intent(this, SimpAlarmService::class.java).apply {
+                action = ACTION_DISMISS_ALARM
+                putExtra(EXTRA_RETURN_TO_APP_ON_DISMISS, returnToAppOnDismiss)
+            },
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+        )
+
+        val notification = NotificationCompat.Builder(this, SOUND_ONLY_HEADS_UP_CHANNEL_ID)
+            .setSmallIcon(android.R.drawable.ic_lock_idle_alarm)
+            .setContentTitle(title)
+            .setContentText(text)
+            .setStyle(NotificationCompat.BigTextStyle().bigText(text))
+            .setPriority(NotificationCompat.PRIORITY_MAX)
+            .setCategory(NotificationCompat.CATEGORY_ALARM)
+            .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
+            .setOngoing(true)
+            .setAutoCancel(false)
+            .setOnlyAlertOnce(false)
+            .setVibrate(longArrayOf(0, 180, 90, 180))
+            .setContentIntent(openPendingIntent)
+            .addAction(android.R.drawable.ic_menu_close_clear_cancel, "關閉鬧鐘", stopPendingIntent)
+            .build()
+
+        NotificationManagerCompat.from(this)
+            .notify(SOUND_ONLY_HEADS_UP_NOTIFICATION_ID, notification)
+    }
+
+    private fun cancelSoundOnlyHeadsUp() {
+        NotificationManagerCompat.from(this).cancel(SOUND_ONLY_HEADS_UP_NOTIFICATION_ID)
+    }
+
+    private fun ensureSoundOnlyHeadsUpChannel() {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
+        val channel = NotificationChannel(
+            SOUND_ONLY_HEADS_UP_CHANNEL_ID,
+            "Simp Alarm 小彈窗",
+            NotificationManager.IMPORTANCE_HIGH
+        ).apply {
+            description = "只響鈴模式下顯示的可關閉小彈窗。"
+            lockscreenVisibility = Notification.VISIBILITY_PUBLIC
+            enableVibration(true)
+            vibrationPattern = longArrayOf(0, 180, 90, 180)
         }
         getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
     }
@@ -367,9 +463,13 @@ class SimpAlarmService : Service() {
         const val ACTION_ALARM_DISMISSED = "com.example.simpalarm.action.ALARM_DISMISSED"
         const val FALLBACK_NOTIFICATION_ID = 1002
         private const val CHANNEL_ID = "simp_alarm_channel_v2"
+        private const val SOUND_ONLY_HEADS_UP_CHANNEL_ID = "simp_alarm_sound_only_heads_up_v1"
         private const val NOTIFICATION_ID = 1001
+        private const val SOUND_ONLY_HEADS_UP_NOTIFICATION_ID = 1004
         private const val DISMISS_ACTIVITY_REQUEST_CODE = 2001
         private const val DISMISS_ALARM_REQUEST_CODE = 2002
+        private const val SOUND_ONLY_OPEN_REQUEST_CODE = 2003
+        private const val SOUND_ONLY_DISMISS_REQUEST_CODE = 2004
 
         @Volatile
         var isAlarmPlaying: Boolean = false
