@@ -17,6 +17,7 @@ SimpAlarm 是一個 Android 通知鬧鐘工具。你可以指定要監聽的 App
 - 鬧鐘會使用系統預設鬧鐘聲循環播放，並搭配震動。
 - 觸發時會建立前景通知，通知欄可直接關閉鬧鐘。
 - 跳出解除畫面支援鎖定畫面顯示，並使用滑動關閉降低誤觸。
+- 若 Android 限制背景跳出畫面，可改用浮動鬧鐘覆蓋在其他 App 上方。
 - 提供觸發紀錄頁，記錄對象、來源 App、時間與訊息摘要。
 - 首次設定採用可恢復的任務流程，跳到系統設定後回到 App 會自動接續。
 - App 內返回鍵會先回首頁，首頁再按一次才退出。
@@ -33,6 +34,8 @@ SimpAlarm 是一個 Android 通知鬧鐘工具。你可以指定要監聽的 App
 - 修正通知欄關閉鬧鐘與滑動關閉畫面不同步的問題。
 - 測試鬧鐘從通知欄關閉後會回到 App；真實外部通知關閉後只會關閉鬧鐘。
 - 強化鬧鐘服務狀態復位，避免服務狀態卡住後後續通知沒有反應。
+- 新增通知監聽保活機制，App 會定期嘗試重新綁定通知監聽服務。
+- 新增浮動鬧鐘備援，當系統不允許背景直接跳出解除頁時，可透過「顯示在其他 App 上層」權限顯示解除畫面。
 
 ## 使用方式
 
@@ -42,7 +45,8 @@ SimpAlarm 是一個 Android 通知鬧鐘工具。你可以指定要監聽的 App
 4. 輸入顯示名稱與通知上實際會出現的名稱或 ID。
 5. 開啟 Android 的通知監聽權限。
 6. 允許鬧鐘通知與全螢幕鬧鐘權限。
-7. 使用「測試鬧鐘」確認聲音、震動與關閉流程正常。
+7. 若你的手機只顯示通知、不跳出畫面，請在「權限檢查」中開啟浮動鬧鐘權限。
+8. 使用「測試鬧鐘」確認聲音、震動與關閉流程正常。
 
 ## 通知比對邏輯
 
@@ -97,6 +101,8 @@ SimpAlarm 支援兩種鬧鐘顯示方式：
 - 跳出畫面：觸發時會嘗試開啟解除鬧鐘頁面，並同時顯示前景通知。
 - 只響鈴：只播放聲音、震動與顯示通知，不主動跳出畫面。
 
+Android 近幾版會限制背景 App 主動跳出 Activity。SimpAlarm 會先嘗試使用全螢幕通知與解除頁面；如果系統仍只顯示通知，建議在權限檢查中允許「浮動鬧鐘」，讓 App 可用覆蓋層顯示解除畫面。
+
 不論哪種模式，通知欄都會提供關閉鬧鐘的按鈕。
 
 ## 需要的權限
@@ -104,6 +110,7 @@ SimpAlarm 支援兩種鬧鐘顯示方式：
 - 通知監聽權限：讀取已選擇 App 的通知。
 - 通知權限：Android 13 以上需要，讓鬧鐘通知可以顯示。
 - 全螢幕通知權限：Android 14 以上可能需要，讓鬧鐘解除畫面可以跳出。
+- 顯示在其他 App 上層：當系統限制背景跳出畫面時，用於顯示浮動鬧鐘解除畫面。
 - 震動權限：觸發鬧鐘時震動。
 - 前景服務權限：讓鬧鐘能在背景可靠播放。
 - 電池最佳化例外：建議設定，降低背景監聽被系統限制的機率。
@@ -115,6 +122,9 @@ app/src/main/java/com/example/simpalarm/
   MainActivity.kt
   SimpNotificationListener.kt
   SimpAlarmService.kt
+  SimpAlarmOverlay.kt
+  SimpAlarmFallbackNotifier.kt
+  SimpListenerHeartbeatService.kt
   AlarmDismissActivity.kt
   SimpTargetManager.kt
   SimpEventLog.kt
@@ -125,6 +135,9 @@ app/src/main/java/com/example/simpalarm/
 - `MainActivity.kt`：Jetpack Compose UI，包含首頁、對象列表、App 選擇、觸發紀錄、設定、首次引導、拖曳排序與頭像。
 - `SimpNotificationListener.kt`：通知監聽入口，判斷通知來源與對象是否符合。
 - `SimpAlarmService.kt`：前景鬧鐘服務，負責播放聲音、震動、通知欄動作與啟動解除畫面。
+- `SimpAlarmOverlay.kt`：浮動鬧鐘備援，系統限制背景跳出時可顯示覆蓋層解除畫面。
+- `SimpAlarmFallbackNotifier.kt`：前景服務或跳出畫面受限時使用的備援通知。
+- `SimpListenerHeartbeatService.kt`：通知監聽保活服務，定期嘗試重新綁定 NotificationListener。
 - `AlarmDismissActivity.kt`：鬧鐘解除畫面，提供滑動關閉與開啟來源 App。
 - `SimpTargetManager.kt`：管理監聽對象、App 選擇、觸發模式、排序與 SharedPreferences 儲存。
 - `SimpEventLog.kt`：記錄最近事件與觸發紀錄。
@@ -135,6 +148,7 @@ app/src/main/java/com/example/simpalarm/
 - Jetpack Compose
 - Android NotificationListenerService
 - Android Foreground Service
+- Android Overlay Window
 - Gradle Kotlin DSL
 
 ## 建置
@@ -186,5 +200,5 @@ local.properties
 - 不同 App 的通知格式可能因語言、帳號、系統版本或通知類型而改變。
 - 若沒有觸發，請先確認通知監聽權限是否已啟用。
 - 某些手機品牌會限制背景服務，可能需要額外允許自啟動或關閉電池最佳化。
-- Android 可能限制背景跳出 Activity；若跳出畫面不穩定，可以改用只響鈴模式並從通知欄關閉。
+- Android 可能限制背景跳出 Activity；若跳出畫面不穩定，請開啟浮動鬧鐘權限，或改用只響鈴模式並從通知欄關閉。
 

@@ -4,6 +4,7 @@ import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
 import android.app.PendingIntent
+import android.app.ActivityOptions
 import android.content.Context
 import android.content.Intent
 import android.os.Build
@@ -42,7 +43,8 @@ object SimpAlarmFallbackNotifier {
             context,
             REQUEST_CODE_OPEN,
             openIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+            backgroundActivityStartOptions()
         )
         val dismissPendingIntent = PendingIntent.getService(
             context,
@@ -102,4 +104,16 @@ object SimpAlarmFallbackNotifier {
         }
         context.getSystemService(NotificationManager::class.java).createNotificationChannel(channel)
     }
+
+    @Suppress("DEPRECATION")
+    private fun backgroundActivityStartOptions() =
+        if (Build.VERSION.SDK_INT >= 35) {
+            ActivityOptions.makeBasic()
+                .setPendingIntentCreatorBackgroundActivityStartMode(
+                    ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED
+                )
+                .toBundle()
+        } else {
+            null
+        }
 }

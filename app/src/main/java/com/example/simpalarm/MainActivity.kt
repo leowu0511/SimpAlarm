@@ -220,6 +220,7 @@ private fun MainScreen() {
     var listenerEnabled by remember { mutableStateOf(isNotificationListenerEnabled(context)) }
     var alarmNotificationAllowed by remember { mutableStateOf(isAlarmNotificationAllowed(context)) }
     var fullScreenIntentAllowed by remember { mutableStateOf(isFullScreenIntentAllowed(context)) }
+    var overlayAllowed by remember { mutableStateOf(SimpAlarmOverlay.canShow(context)) }
     var batteryOptimized by remember { mutableStateOf(isBatteryOptimizationActive(context)) }
     var powerSaveMode by remember { mutableStateOf(isPowerSaveModeActive(context)) }
     var lastEvent by remember { mutableStateOf(SimpEventLog.lastEvent(context)) }
@@ -245,6 +246,7 @@ private fun MainScreen() {
         listenerEnabled = currentListenerEnabled
         alarmNotificationAllowed = isAlarmNotificationAllowed(context)
         fullScreenIntentAllowed = isFullScreenIntentAllowed(context)
+        overlayAllowed = SimpAlarmOverlay.canShow(context)
         batteryOptimized = isBatteryOptimizationActive(context)
         powerSaveMode = isPowerSaveModeActive(context)
         lastEvent = SimpEventLog.lastEvent(context)
@@ -432,6 +434,7 @@ private fun MainScreen() {
                         listenerEnabled = listenerEnabled,
                         alarmNotificationAllowed = alarmNotificationAllowed,
                         fullScreenIntentAllowed = fullScreenIntentAllowed,
+                        overlayAllowed = overlayAllowed,
                         batteryOptimized = batteryOptimized,
                         powerSaveMode = powerSaveMode,
                         lastEvent = lastEvent,
@@ -524,6 +527,7 @@ private fun MainScreen() {
                         listenerEnabled = listenerEnabled,
                         alarmNotificationAllowed = alarmNotificationAllowed,
                         fullScreenIntentAllowed = fullScreenIntentAllowed,
+                        overlayAllowed = overlayAllowed,
                         batteryOptimized = batteryOptimized,
                         powerSaveMode = powerSaveMode,
                         onTriggerModeChange = { mode ->
@@ -557,6 +561,7 @@ private fun MainScreen() {
                             }
                         },
                         onOpenFullScreenIntentSettings = { openFullScreenIntentSettings(context) },
+                        onOpenOverlaySettings = { openOverlaySettings(context) },
                         onOpenBatterySettings = { requestIgnoreBatteryOptimization(context) }
                     )
 
@@ -1077,12 +1082,13 @@ private fun PermissionSummaryCard(
     listenerEnabled: Boolean,
     alarmNotificationAllowed: Boolean,
     fullScreenIntentAllowed: Boolean,
+    overlayAllowed: Boolean,
     batteryOptimized: Boolean,
     powerSaveMode: Boolean,
     onClick: () -> Unit
 ) {
     val missingRequired = !listenerEnabled || !alarmNotificationAllowed
-    val missingRecommended = !fullScreenIntentAllowed || batteryOptimized || powerSaveMode
+    val missingRecommended = !fullScreenIntentAllowed || !overlayAllowed || batteryOptimized || powerSaveMode
     val statusColor = when {
         missingRequired -> DangerRed
         missingRecommended -> WarningOrange
@@ -1112,11 +1118,13 @@ private fun PermissionCard(
     listenerEnabled: Boolean,
     alarmNotificationAllowed: Boolean,
     fullScreenIntentAllowed: Boolean,
+    overlayAllowed: Boolean,
     batteryOptimized: Boolean,
     powerSaveMode: Boolean,
     onOpenListenerSettings: () -> Unit,
     onRequestNotificationPermission: () -> Unit,
     onOpenFullScreenIntentSettings: () -> Unit,
+    onOpenOverlaySettings: () -> Unit,
     onOpenBatterySettings: () -> Unit
 ) {
     var showAll by remember { mutableStateOf(false) }
@@ -1124,6 +1132,7 @@ private fun PermissionCard(
         PermissionUiItem("通知監聽", if (listenerEnabled) "已啟用" else "未啟用", listenerEnabled, true, onOpenListenerSettings),
         PermissionUiItem("鬧鐘通知", if (alarmNotificationAllowed) "已允許" else "未允許", alarmNotificationAllowed, true, onRequestNotificationPermission),
         PermissionUiItem("全螢幕鬧鐘", if (fullScreenIntentAllowed) "已允許" else "未允許", fullScreenIntentAllowed, false, onOpenFullScreenIntentSettings),
+        PermissionUiItem("浮動鬧鐘", if (overlayAllowed) "已允許" else "未允許", overlayAllowed, false, onOpenOverlaySettings),
         PermissionUiItem("電池最佳化", if (batteryOptimized) "未允許" else "已允許", !batteryOptimized, false, onOpenBatterySettings),
         PermissionUiItem("省電模式", if (powerSaveMode) "已開啟" else "未開啟", !powerSaveMode, false, onOpenBatterySettings)
     )
@@ -1535,6 +1544,18 @@ private fun openFullScreenIntentSettings(context: Context) {
     }
 }
 
+private fun openOverlaySettings(context: Context) {
+    if (SimpAlarmOverlay.canShow(context)) {
+        Toast.makeText(context, "浮動鬧鐘已允許。", Toast.LENGTH_SHORT).show()
+        return
+    }
+
+    Toast.makeText(context, "請允許 Simp Alarm 顯示在其他 App 上層。", Toast.LENGTH_LONG).show()
+    if (!safeStartActivity(context, SimpAlarmOverlay.settingsIntent(context))) {
+        openAppDetailsSettings(context)
+    }
+}
+
 private fun openAppDetailsSettings(context: Context) {
     val intent = Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS).apply {
         data = Uri.parse("package:${context.packageName}")
@@ -1608,6 +1629,7 @@ private fun HomeScreen(
     listenerEnabled: Boolean,
     alarmNotificationAllowed: Boolean,
     fullScreenIntentAllowed: Boolean,
+    overlayAllowed: Boolean,
     batteryOptimized: Boolean,
     powerSaveMode: Boolean,
     lastEvent: String,
@@ -1663,6 +1685,7 @@ private fun HomeScreen(
         listenerEnabled = listenerEnabled,
         alarmNotificationAllowed = alarmNotificationAllowed,
         fullScreenIntentAllowed = fullScreenIntentAllowed,
+        overlayAllowed = overlayAllowed,
         batteryOptimized = batteryOptimized,
         powerSaveMode = powerSaveMode,
         onClick = onOpenPermissions
@@ -2179,6 +2202,7 @@ private fun SettingsScreen(
     listenerEnabled: Boolean,
     alarmNotificationAllowed: Boolean,
     fullScreenIntentAllowed: Boolean,
+    overlayAllowed: Boolean,
     batteryOptimized: Boolean,
     powerSaveMode: Boolean,
     onTriggerModeChange: (TriggerMode) -> Unit,
@@ -2190,6 +2214,7 @@ private fun SettingsScreen(
     onOpenListenerSettings: () -> Unit,
     onRequestNotificationPermission: () -> Unit,
     onOpenFullScreenIntentSettings: () -> Unit,
+    onOpenOverlaySettings: () -> Unit,
     onOpenBatterySettings: () -> Unit
 ) {
     TopBar(colors, "設定")
@@ -2228,11 +2253,13 @@ private fun SettingsScreen(
         listenerEnabled = listenerEnabled,
         alarmNotificationAllowed = alarmNotificationAllowed,
         fullScreenIntentAllowed = fullScreenIntentAllowed,
+        overlayAllowed = overlayAllowed,
         batteryOptimized = batteryOptimized,
         powerSaveMode = powerSaveMode,
         onOpenListenerSettings = onOpenListenerSettings,
         onRequestNotificationPermission = onRequestNotificationPermission,
         onOpenFullScreenIntentSettings = onOpenFullScreenIntentSettings,
+        onOpenOverlaySettings = onOpenOverlaySettings,
         onOpenBatterySettings = onOpenBatterySettings
     )
     Row(horizontalArrangement = Arrangement.spacedBy(8.dp), modifier = Modifier.fillMaxWidth()) {

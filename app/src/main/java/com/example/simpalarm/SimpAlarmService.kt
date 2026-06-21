@@ -33,6 +33,7 @@ class SimpAlarmService : Service() {
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         if (intent?.action == ACTION_DISMISS_ALARM) {
             SimpEventLog.record(this, "已從通知欄關閉鬧鐘。")
+            SimpAlarmOverlay.dismiss(this)
             if (intent.getBooleanExtra(EXTRA_RETURN_TO_APP_ON_DISMISS, false)) {
                 openMainActivity()
             }
@@ -112,13 +113,14 @@ class SimpAlarmService : Service() {
 
         if (alarmPresentationMode == AlarmPresentationMode.FullScreen && !startedFromDismissActivity) {
             wakeScreenBriefly()
-            openDismissActivity(intent, sender, message)
+            openDismissActivity(intent, sender, message, sourceAppLabel, sourcePackage)
         }
         return START_NOT_STICKY
     }
 
     override fun onDestroy() {
         try {
+            SimpAlarmOverlay.dismiss(this)
             runCatching { mediaPlayer?.stop() }
             runCatching { mediaPlayer?.release() }
             mediaPlayer = null
@@ -156,7 +158,8 @@ class SimpAlarmService : Service() {
             this,
             0,
             dismissIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+            backgroundActivityStartOptions()
         )
         val stopIntent = Intent(this, SimpAlarmService::class.java).apply {
             action = ACTION_DISMISS_ALARM
@@ -273,7 +276,13 @@ class SimpAlarmService : Service() {
     }
 
     @Suppress("DEPRECATION")
-    private fun openDismissActivity(sourceIntent: Intent?, sender: String, message: String) {
+    private fun openDismissActivity(
+        sourceIntent: Intent?,
+        sender: String,
+        message: String,
+        sourceAppLabel: String,
+        sourcePackage: String
+    ) {
         val activityIntent = Intent(this, AlarmDismissActivity::class.java).apply {
             flags = Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TASK
             putExtra(EXTRA_SENDER_NAME, sender)
@@ -290,7 +299,22 @@ class SimpAlarmService : Service() {
             this,
             DISMISS_ACTIVITY_REQUEST_CODE,
             activityIntent,
-            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE
+            PendingIntent.FLAG_UPDATE_CURRENT or PendingIntent.FLAG_IMMUTABLE,
+            backgroundActivityStartOptions()
+        )
+
+        if (fallbackStartActivity(activityIntent)) {
+            SimpEventLog.record(this, "已直接跳出鬧鐘解除畫面。")
+            return
+        }
+
+        SimpAlarmOverlay.show(
+            context = this,
+            sender = sender,
+            message = message,
+            sourceAppLabel = sourceAppLabel,
+            sourcePackage = sourcePackage,
+            returnToAppOnDismiss = sourceIntent?.getBooleanExtra(EXTRA_RETURN_TO_APP_ON_DISMISS, false) == true
         )
 
         try {
@@ -304,22 +328,24 @@ class SimpAlarmService : Service() {
             } else {
                 pendingIntent.send()
             }
+            SimpEventLog.record(this, "已透過全螢幕 PendingIntent 要求跳出鬧鐘解除畫面。")
         } catch (_: PendingIntent.CanceledException) {
-            fallbackStartActivity(activityIntent)
+            SimpEventLog.record(this, "鬧鐘解除畫面啟動失敗：PendingIntent 已取消。")
         } catch (_: ActivityNotFoundException) {
-            fallbackStartActivity(activityIntent)
+            SimpEventLog.record(this, "鬧鐘解除畫面啟動失敗：找不到 Activity。")
         } catch (_: SecurityException) {
-            fallbackStartActivity(activityIntent)
+            SimpEventLog.record(this, "鬧鐘解除畫面啟動失敗：系統安全限制。")
         } catch (_: RuntimeException) {
-            // Background activity launches can be restricted; the full-screen notification remains available.
-            fallbackStartActivity(activityIntent)
+            SimpEventLog.record(this, "鬧鐘解除畫面啟動失敗：背景啟動被系統限制。")
         }
     }
 
-    private fun fallbackStartActivity(activityIntent: Intent) {
-        try {
+    private fun fallbackStartActivity(activityIntent: Intent): Boolean {
+        return try {
             startActivity(activityIntent)
+            true
         } catch (_: RuntimeException) {
+            false
         }
     }
 
@@ -331,6 +357,18 @@ class SimpAlarmService : Service() {
         }
         fallbackStartActivity(activityIntent)
     }
+
+    @Suppress("DEPRECATION")
+    private fun backgroundActivityStartOptions() =
+        if (Build.VERSION.SDK_INT >= 35) {
+            ActivityOptions.makeBasic()
+                .setPendingIntentCreatorBackgroundActivityStartMode(
+                    ActivityOptions.MODE_BACKGROUND_ACTIVITY_START_ALLOWED
+                )
+                .toBundle()
+        } else {
+            null
+        }
 
     private fun notifyAlarmDismissed() {
         sendBroadcast(Intent(ACTION_ALARM_DISMISSED).setPackage(packageName))
